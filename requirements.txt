@@ -1,6 +1,6 @@
 fastapi
 uvicorn[standard]
-elasticsearch[async]
+elasticsearch[async]==8.18.0
 httpx
 pydantic
 python-dotenv

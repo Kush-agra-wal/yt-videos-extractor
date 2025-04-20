@@ -1,0 +1,75 @@
+version: '3.8'
+
+services:
+  # Elasticsearch Service
+  elasticsearch:
+    image: elasticsearch:8.18.0 # Use a specific, recent version compatible with your client library
+    container_name: es01 # Optional: specific container name
+    environment:
+      # Required for single-node cluster in development
+      - discovery.type=single-node
+      # Disable security for local development ease (DO NOT use in production)
+      - xpack.security.enabled=false
+      # Limit memory usage (adjust based on your system resources)
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+      # Allow CORS requests from any origin (useful if you add a frontend later)
+      # Be more specific in production if needed
+      - http.cors.enabled=true
+      - http.cors.allow-origin="*"
+      - http.cors.allow-headers=X-Requested-With,X-Auth-Token,Content-Type,Content-Length,Authorization
+      - http.cors.allow-credentials=true
+    volumes:
+      # Persist Elasticsearch data using a named volume
+      - esdata:/usr/share/elasticsearch/data
+    ports:
+      # Map Elasticsearch port 9200 (container) to 9200 (host)
+      - "9200:9200"
+    networks:
+      # Connect to the custom network
+      - yt_network
+    healthcheck:
+        # Check if Elasticsearch is ready before dependent services start
+        test: ["CMD-SHELL", "curl -s http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=5s"]
+        interval: 10s
+        timeout: 10s
+        retries: 5
+
+  # FastAPI Application Service
+  app:
+    build: . # Build the image from the Dockerfile in the current directory
+    container_name: youtube_fetcher_api # Optional: specific container name
+    # env_file:
+    #   # Load environment variables from the .env file in the project root
+    #   - .env
+    environment:
+      # Explicitly set the ES host to the service name within the Docker network
+      # This overrides any value potentially set in the .env file for this specific variable
+      - ELASTICSEARCH_HOST=http://elasticsearch:9200
+    ports:
+      # Map port 8000 (container) to 8000 (host)
+      - "8000:8000"
+    volumes:
+      # Mount the local 'app' directory into the container for development
+      # Changes in your local ./app folder will reflect inside the container
+      # Remove this line for production builds to use the code copied in the Dockerfile
+      - ./app:/app/app
+      - ./.env:/app/.env:ro
+    command: # Override the Dockerfile CMD for development with auto-reload
+      ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    depends_on:
+      # Wait for Elasticsearch to be healthy before starting the app
+      elasticsearch:
+        condition: service_healthy
+    networks:
+      # Connect to the custom network
+      - yt_network
+
+# Define the custom network
+networks:
+  yt_network:
+    driver: bridge # Default Docker network driver
+
+# Define the named volume for Elasticsearch data persistence
+volumes:
+  esdata:
+    driver: local # Default Docker volume driver
