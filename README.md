@@ -1,13 +1,19 @@
 # YouTube Video Fetcher API
 
 This application fetches YouTube videos based on a search query, stores them in Elasticsearch, and provides an API to retrieve and search these videos.
+*   periodically runs search query on youtube api (with multiple api keys rotating)
+*   saves new search reasults (after last published index) in elasticsearch
+*   /videos to get paginated output of saved videos
+*   /search takes query and does fuzzysearch on title+description to give top matching results
+
+
 
 ## Prerequisites
 
 *   Python 3.8+
 *   pip
 *   An Elasticsearch instance (v8.18.0) accessible from the application.
-*   Docker and Docker Compose (Optional, if using the provided `docker-compose.yml` in the root directory).
+*   Docker and Docker Compose (Optional).
 
 ## Setup
 
