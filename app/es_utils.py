@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime
+from datetime import datetime,timezone
 from typing import List, Optional, Tuple, Dict, Any
 
 from elasticsearch import AsyncElasticsearch, NotFoundError, RequestError
@@ -76,7 +76,7 @@ async def index_video(video: Video):
 
 async def get_latest_video_timestamp() -> Optional[datetime]:
     """Fetches the 'published_at' timestamp of the most recent video in the index."""
-    client = get_es_client()
+    client = get_es_client() # Assumes get_es_client() is available
     index_name = ELASTICSEARCH_INDEX
     try:
         # Check if index exists first to avoid error on empty index
@@ -94,11 +94,32 @@ async def get_latest_video_timestamp() -> Optional[datetime]:
         if hits:
             timestamp_str = hits[0]['_source']['published_at']
             try:
-                # Let Pydantic handle parsing, including timezone awareness
-                return Video.model_validate({'published_at': timestamp_str}).published_at
-            except Exception as parse_err:
-                 logger.error(f"Failed to parse timestamp '{timestamp_str}': {parse_err}")
-                 return None # Or handle error appropriately
+                # Directly parse the ISO 8601 timestamp string
+                # Handle the 'Z' timezone indicator which means UTC
+                if isinstance(timestamp_str, str) and timestamp_str.endswith('Z'):
+                    # Replace 'Z' with '+00:00' for compatibility if needed,
+                    # though fromisoformat usually handles 'Z' in Python 3.7+
+                    timestamp_str = timestamp_str[:-1] + '+00:00'
+
+                # Use datetime.fromisoformat for robust parsing
+                dt_object = datetime.fromisoformat(timestamp_str)
+
+                # Ensure the datetime object is timezone-aware
+                # (it should be if parsed from ISO format with offset like +00:00 or Z)
+                if dt_object.tzinfo is None:
+                     # This might happen if the timestamp string didn't have timezone info,
+                     # but ES date fields usually do. Assume UTC if missing.
+                     dt_object = dt_object.replace(tzinfo=timezone.utc)
+                     logger.warning(f"Parsed timestamp '{timestamp_str}' lacked timezone info, assuming UTC.")
+
+                logger.info(f"Parsed latest video timestamp: {dt_object}")
+                return dt_object
+            except ValueError as parse_err: # Catch specific parsing errors
+                 logger.error(f"Failed to parse timestamp '{timestamp_str}' using fromisoformat: {parse_err}")
+                 return None
+            except Exception as e: # Catch any other unexpected errors during parsing
+                 logger.error(f"Unexpected error parsing timestamp '{timestamp_str}': {e}", exc_info=True)
+                 return None
         else:
             logger.info(f"No videos found in index '{index_name}'. Returning None for timestamp.")
             return None

@@ -3,12 +3,11 @@ import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Query, HTTPException
-from fastapi.responses import ORJSONResponse
 
-from .config import DEFAULT_PAGE_SIZE,FETCH_INTERVAL_SECONDS,MAX_PAGE_SIZE
+from .config import DEFAULT_PAGE_SIZE,FETCH_INTERVAL_SECONDS,MAX_PAGE_SIZE,SEARCH_QUERY
 from .pydantic_models import VideoListResponse
 from . import es_utils
-
+from . import yt_utils
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
@@ -16,7 +15,53 @@ background_task = None
 shutdown_event = asyncio.Event()
 
 async def periodic_fetch():
-    print("fetch from yt")
+    """Background task to periodically fetch videos from YouTube."""
+    logger.info("Starting periodic YouTube video fetch task...")
+    while not shutdown_event.is_set():
+        try:
+            logger.info("Running fetch cycle...")
+            latest_timestamp = await es_utils.get_latest_video_timestamp()
+
+            api_key = yt_utils.get_next_api_key()
+            if not api_key:
+                logger.error("No YouTube API key available. Skipping fetch cycle.")
+                await asyncio.sleep(FETCH_INTERVAL_SECONDS * 5)
+                continue
+
+            try:
+                new_videos = await yt_utils.fetch_latest_videos(
+                    search_query=SEARCH_QUERY,
+                    api_key=api_key,
+                    published_after=latest_timestamp
+                )
+            except Exception as fetch_err:
+                 logger.error(f"Error during yt_utils.fetch_latest_videos: {fetch_err}", exc_info=True)
+                 new_videos = []
+
+            if new_videos:
+                logger.info(f"Fetched {len(new_videos)} new videos. Indexing...")
+                indexed_count = 0
+                for video in new_videos:
+                    try:
+                        await es_utils.index_video(video)
+                        indexed_count += 1
+                    except Exception as index_err:
+                        logger.error(f"Failed to index video {video.video_id}: {index_err}", exc_info=True)
+                        
+                logger.info(f"Successfully indexed {indexed_count}/{len(new_videos)} videos.")
+            else:
+                logger.info("No new videos fetched in this cycle.")
+
+            try:
+                 await asyncio.wait_for(shutdown_event.wait(), timeout=FETCH_INTERVAL_SECONDS)
+            except asyncio.TimeoutError:
+                 pass
+
+        except Exception as e:
+            logger.error(f"Error in periodic_fetch loop: {e}", exc_info=True)
+            await asyncio.sleep(FETCH_INTERVAL_SECONDS)
+
+    logger.info("Periodic YouTube video fetch task stopped.")
 
 
 @asynccontextmanager
